@@ -7,6 +7,7 @@ import android.hardware.SensorEvent;
 import android.location.Location;
 import android.os.SystemClock;
 import com.robot.simulator.bridge.BridgeSnapshot;
+import com.robot.simulator.bridge.CoordinateTransform;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -61,7 +62,7 @@ public final class RobotSimulatorHook implements IXposedHookLoadPackage {
         );
     }
 
-    /** Records the AMap input and configuration without changing either one. */
+    /** Records AMap diagnostics and adapts its public location view to bridge snapshots. */
     private void hookAMapDiagnostics(ClassLoader loader) {
         if (loader == null || AMAP_CORE_HOOKED.get()) return;
         try {
@@ -71,8 +72,17 @@ public final class RobotSimulatorHook implements IXposedHookLoadPackage {
             Class<?> optionClass = XposedHelpers.findClassIfExists(
                     "com.amap.api.location.AMapLocationClientOption", loader
             );
-            if (clientClass == null || optionClass == null) return;
+            Class<?> locationClass = XposedHelpers.findClassIfExists(
+                    "com.amap.api.location.AMapLocation", loader
+            );
+            if (clientClass == null || optionClass == null || locationClass == null) return;
             if (!AMAP_CORE_HOOKED.compareAndSet(false, true)) return;
+
+            hookAMapGetter(locationClass, "getLatitude", snapshot -> snapshot.latitude);
+            hookAMapGetter(locationClass, "getLongitude", snapshot -> snapshot.longitude);
+            hookAMapGetter(locationClass, "getAccuracy", snapshot -> snapshot.accuracyM);
+            hookAMapGetter(locationClass, "getSpeed", snapshot -> snapshot.speedMps);
+            hookAMapGetter(locationClass, "getBearing", snapshot -> snapshot.headingDeg);
 
             XposedBridge.hookAllMethods(optionClass, "setMockEnable", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
@@ -121,12 +131,40 @@ public final class RobotSimulatorHook implements IXposedHookLoadPackage {
                             return;
                         }
                         logAMapLocation(location);
+                        applyAMapSnapshot(location);
                     }
                 });
             } catch (Throwable throwable) {
                 XposedBridge.log("RobotHook-AMap: listener hook failed: " + throwable);
             }
         }
+    }
+
+    private void hookAMapGetter(Class<?> locationClass, String methodName, SnapshotValue value) {
+        XposedBridge.hookAllMethods(locationClass, methodName, new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam param) {
+                BridgeSnapshot snapshot = BridgeState.INSTANCE.current();
+                if (snapshot.sequence > 0L) param.setResult(value.read(snapshot));
+            }
+        });
+    }
+
+    private void applyAMapSnapshot(Object location) {
+        BridgeSnapshot snapshot = BridgeState.INSTANCE.current();
+        if (snapshot.sequence == 0L) return;
+        writeValue(location, "setLatitude", snapshot.latitude);
+        writeValue(location, "setLongitude", snapshot.longitude);
+        writeValue(location, "setAccuracy", snapshot.accuracyM);
+        writeValue(location, "setSpeed", snapshot.speedMps);
+        writeValue(location, "setBearing", snapshot.headingDeg);
+        XposedBridge.log(
+                "RobotHook-AMap: delivered seq=" + snapshot.sequence
+                        + " lat=" + snapshot.latitude
+                        + " lon=" + snapshot.longitude
+                        + " accuracy=" + snapshot.accuracyM
+                        + " speed=" + snapshot.speedMps
+                        + " bearing=" + snapshot.headingDeg
+        );
     }
 
     private void logAMapLocation(Object location) {
@@ -163,9 +201,19 @@ public final class RobotSimulatorHook implements IXposedHookLoadPackage {
         }
     }
 
+    private void writeValue(Object target, String methodName, Object value) {
+        try {
+            XposedHelpers.callMethod(target, methodName, value);
+        } catch (Throwable throwable) {
+            XposedBridge.log("RobotHook-AMap: " + methodName + " unavailable: " + throwable);
+        }
+    }
+
     private void hookStandardLocation() {
-        hookLocationGetter("getLatitude", s -> s.latitude);
-        hookLocationGetter("getLongitude", s -> s.longitude);
+        hookLocationGetter("getLatitude", s ->
+                CoordinateTransform.gcj02ToWgs84(s.latitude, s.longitude)[0]);
+        hookLocationGetter("getLongitude", s ->
+                CoordinateTransform.gcj02ToWgs84(s.latitude, s.longitude)[1]);
         hookLocationGetter("getAccuracy", s -> s.accuracyM);
         hookLocationGetter("getSpeed", s -> s.speedMps);
         hookLocationGetter("getBearing", s -> s.headingDeg);

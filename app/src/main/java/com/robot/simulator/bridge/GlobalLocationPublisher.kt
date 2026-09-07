@@ -35,9 +35,10 @@ class GlobalLocationPublisher(context: Context) {
 
     private fun publishToProvider(provider: String, snapshot: BridgeSnapshot) {
         ensureProvider(provider)
+        val wgs84 = CoordinateTransform.gcj02ToWgs84(snapshot.latitude, snapshot.longitude)
         val location = Location(provider).apply {
-            latitude = snapshot.latitude
-            longitude = snapshot.longitude
+            latitude = wgs84[0]
+            longitude = wgs84[1]
             accuracy = snapshot.accuracyM
             speed = snapshot.speedMps
             bearing = snapshot.headingDeg
