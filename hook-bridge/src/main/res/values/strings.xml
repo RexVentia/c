@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_description">将 RobotSimulator 的授权调试数据桥接到 MuMu 内的标准定位与运动数据接口</string>
+</resources>
