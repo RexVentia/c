@@ -6,6 +6,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SimulationModelsTest {
+    @Test
+    fun variableCadenceIsRepeatableBoundedAndEndsExactly() {
+        val config = SimulationConfig(route, 1000, 140.0, 42L, 8.0, 10.0)
+        val engine = DeterministicSimulationEngine()
+        var previous = 0
+        for (time in 0L until config.durationMs step 100L) {
+            val snapshot = engine.snapshot(config, time)
+            assertTrue(snapshot.cadenceSpm in 132.0..148.0)
+            assertTrue(snapshot.stepCount >= previous)
+            assertEquals(snapshot, engine.snapshot(config, time))
+            previous = snapshot.stepCount
+        }
+        val end = engine.snapshot(config, config.durationMs + 1000)
+        assertEquals(1000, end.stepCount)
+        assertEquals(route.controlPoints.last(), end.position)
+        assertEquals(0.0, end.cadenceSpm, 0.0)
+        assertTrue(engine.snapshot(config, 5000) != engine.snapshot(config.copy(randomSeed = 600), 5000))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsCadenceVariationOutsideBounds() {
+        SimulationConfig(route, 1000, 151.0, cadenceVariationSpm = 1.0)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsInvalidCadencePeriod() {
+        SimulationConfig(route, 1000, 140.0, cadencePeriodSeconds = Double.NaN)
+    }
+
     private val route = RouteDefinition(
         id = "route-1",
         name = "测试路线",
@@ -27,10 +56,13 @@ class SimulationModelsTest {
     @Test
     fun speedBoundariesAndSuggestedStepsAreExact() {
         val range = SimulationRules.suggestedSteps(route.lengthM, 120.0)
-        assertEquals(StepRange(800, 1_200), range)
-        assertEquals(3.0, SimulationConfig(route, 800, 120.0).speedMps, 0.0001)
+        assertEquals(StepRange(480, 1_200), range)
+        assertEquals(5.0, SimulationConfig(route, 480, 120.0).speedMps, 0.0001)
         assertEquals(2.0, SimulationConfig(route, 1_200, 120.0).speedMps, 0.0001)
-        assertFalse(SimulationRules.validate(route, 799, 120.0).valid)
+        assertTrue(SimulationRules.validate(route, 480, 120.0).valid)
+        assertTrue(SimulationRules.validate(route, 1_200, 120.0).valid)
+        assertTrue(SimulationRules.validate(route, 600, 120.0).valid)
+        assertFalse(SimulationRules.validate(route, 479, 120.0).valid)
         assertFalse(SimulationRules.validate(route, 1_201, 120.0).valid)
     }
 

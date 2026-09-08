@@ -52,7 +52,8 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
     private var runningSinceRealtimeMs = 0L
     private var ticker: Job? = null
 
-    fun start(route: RouteEntity, totalSteps: Int, cadenceSpm: Double) {
+    fun start(route: RouteEntity, totalSteps: Int, cadenceSpm: Double,
+              cadenceVariationSpm: Double = 0.0, cadencePeriodSeconds: Double = 10.0, randomSeed: Long = 1L) {
         val previousConfig = config
         val previousSnapshot = mutableSnapshot.value
         if (previousConfig != null && previousSnapshot?.status in
@@ -72,7 +73,9 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
             route = RouteDefinition(route.id, route.name, points, route.lengthM),
             totalSteps = totalSteps,
             cadenceSpm = cadenceSpm,
-            randomSeed = System.currentTimeMillis(),
+            randomSeed = randomSeed,
+            cadenceVariationSpm = cadenceVariationSpm,
+            cadencePeriodSeconds = cadencePeriodSeconds,
         )
         config = newConfig
         mutableActiveRoute.value = newConfig.route
@@ -96,7 +99,8 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
         if (mutableSnapshot.value?.status != SimulationStatus.Running) return
         accumulatedMs = currentElapsed(activeConfig)
         ticker?.cancel()
-        publish(engine.snapshot(activeConfig, accumulatedMs).copy(status = SimulationStatus.Paused))
+        publish(engine.snapshot(activeConfig, accumulatedMs).copy(
+            status = SimulationStatus.Paused, speedMps = 0.0, cadenceSpm = 0.0))
     }
 
     fun resume() {
@@ -111,7 +115,8 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
         if (current.status !in listOf(SimulationStatus.Running, SimulationStatus.Paused)) return
         if (current.status == SimulationStatus.Running) accumulatedMs = currentElapsed(activeConfig)
         ticker?.cancel()
-        val stopped = engine.snapshot(activeConfig, accumulatedMs).copy(status = SimulationStatus.Stopped)
+        val stopped = engine.snapshot(activeConfig, accumulatedMs).copy(
+            status = SimulationStatus.Stopped, speedMps = 0.0, cadenceSpm = 0.0)
         publish(stopped)
         persist(stopped)
     }
@@ -155,7 +160,7 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
                     routeId = activeConfig.route.id,
                     routeName = activeConfig.route.name,
                     status = finalSnapshot.status.name,
-                    configJson = "{\"totalSteps\":${activeConfig.totalSteps},\"cadenceSpm\":${activeConfig.cadenceSpm}}",
+                    configJson = "{\"totalSteps\":${activeConfig.totalSteps},\"cadenceSpm\":${activeConfig.cadenceSpm},\"cadenceVariationSpm\":${activeConfig.cadenceVariationSpm},\"cadencePeriodSeconds\":${activeConfig.cadencePeriodSeconds},\"randomSeed\":${activeConfig.randomSeed}}",
                     totalSteps = activeConfig.totalSteps,
                     cadenceSpm = activeConfig.cadenceSpm,
                     plannedDurationMs = activeConfig.durationMs,

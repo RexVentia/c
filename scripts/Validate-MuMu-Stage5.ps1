@@ -184,7 +184,7 @@ $fieldY = ([int]$match.Groups[2].Value + [int]$match.Groups[4].Value) / 2
 & $adb -s $script:serial shell input keyevent 111 | Out-Null
 Start-Sleep -Milliseconds 400
 $invalidSpeedUi = Read-Ui "invalid-speed"
-Assert-True ($invalidSpeedUi.OuterXml -match '不在 2–3 m/s；建议步数') "Invalid speed guidance was not shown"
+Assert-True ($invalidSpeedUi.OuterXml -match '不在 2–5 m/s；建议步数') "Invalid speed guidance was not shown"
 Clear-And-Type "140" "119"
 $invalidCadenceUi = Read-Ui "invalid-cadence"
 Assert-UiText $invalidCadenceUi "步频必须在 120–151 步/分钟"

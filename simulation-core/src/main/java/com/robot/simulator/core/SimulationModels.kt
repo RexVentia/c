@@ -25,11 +25,19 @@ data class SimulationConfig(
     val totalSteps: Int,
     val cadenceSpm: Double,
     val randomSeed: Long = 1L,
+    val cadenceVariationSpm: Double = 0.0,
+    val cadencePeriodSeconds: Double = 10.0,
 ) {
+    init {
+        require(cadenceSpm in 120.0..151.0)
+        require(cadenceVariationSpm.isFinite() && cadenceVariationSpm >= 0.0 &&
+            cadenceVariationSpm <= minOf(cadenceSpm - 120.0, 151.0 - cadenceSpm))
+        require(cadencePeriodSeconds.isFinite() && cadencePeriodSeconds in 2.0..120.0)
+    }
     val durationMs: Long
         get() = (totalSteps * 60_000.0 / cadenceSpm).toLong().coerceAtLeast(1L)
     val speedMps: Double
-        get() = route.lengthM / (durationMs / 1_000.0)
+        get() = route.lengthM * cadenceSpm / (totalSteps * 60.0)
 }
 
 data class StepRange(val minimum: Int, val maximum: Int)
@@ -45,7 +53,7 @@ object SimulationRules {
     const val MIN_CADENCE_SPM = 120.0
     const val MAX_CADENCE_SPM = 151.0
     const val MIN_SPEED_MPS = 2.0
-    const val MAX_SPEED_MPS = 3.0
+    const val MAX_SPEED_MPS = 5.0
 
     fun suggestedSteps(lengthM: Double, cadenceSpm: Double): StepRange {
         val minimum = ceil(lengthM * cadenceSpm / (60.0 * MAX_SPEED_MPS)).toInt().coerceAtLeast(1)
@@ -66,7 +74,7 @@ object SimulationRules {
         if (config.speedMps !in MIN_SPEED_MPS..MAX_SPEED_MPS) {
             return SimulationValidation(
                 false,
-                "当前平均速度 %.2f m/s，不在 2–3 m/s；建议步数 %d–%d"
+                "当前平均速度 %.2f m/s，不在 2–5 m/s；建议步数 %d–%d"
                     .format(config.speedMps, range.minimum, range.maximum),
                 config.speedMps,
                 range,
@@ -114,6 +122,26 @@ interface SimulationEngine {
 }
 
 class DeterministicSimulationEngine : SimulationEngine {
+    // Whole cycles preserve the requested average and exact final step total.
+    private fun cadenceOmega(config: SimulationConfig): Double {
+        val duration = config.durationMs / 1000.0
+        val cycles = kotlin.math.round(duration / config.cadencePeriodSeconds).coerceAtLeast(1.0)
+        return 2.0 * PI * cycles / duration
+    }
+
+    fun cadenceAt(config: SimulationConfig, elapsedMs: Long): Double =
+        config.cadenceSpm + config.cadenceVariationSpm *
+            cos(cadenceOmega(config) * elapsedMs.coerceIn(0, config.durationMs) / 1000.0 + seedPhase(config))
+
+    private fun continuousSteps(config: SimulationConfig, elapsedMs: Long): Double {
+        val omega = cadenceOmega(config)
+        val phase = seedPhase(config)
+        return (config.totalSteps * (elapsedMs.toDouble() / config.durationMs) +
+            config.cadenceVariationSpm / (60.0 * omega) *
+            (sin(omega * elapsedMs / 1000.0 + phase) - sin(phase)))
+            .coerceIn(0.0, config.totalSteps.toDouble())
+    }
+
     override fun snapshot(config: SimulationConfig, elapsedMs: Long): SimulationSnapshot {
         require(config.route.controlPoints.size >= 2) { "Route requires at least two points" }
         val elapsed = elapsedMs.coerceIn(0L, config.durationMs)
@@ -127,13 +155,13 @@ class DeterministicSimulationEngine : SimulationEngine {
             config.route.lengthM * speedProfile(config, elapsedSeconds) / totalProfileArea
         val (position, heading) = pointAtDistance(config.route.controlPoints, distance)
         val steps = if (elapsed == config.durationMs) config.totalSteps else
-            floor(elapsed * config.cadenceSpm / 60_000.0).toInt().coerceAtMost(config.totalSteps)
+            floor(continuousSteps(config, elapsed)).toInt().coerceAtMost(config.totalSteps)
         return SimulationSnapshot(
             elapsedMs = elapsed,
             remainingMs = config.durationMs - elapsed,
             stepCount = steps,
             totalSteps = config.totalSteps,
-            cadenceSpm = config.cadenceSpm,
+            cadenceSpm = if (elapsed == config.durationMs) 0.0 else cadenceAt(config, elapsed),
             position = position.copy(cumulativeDistanceM = distance),
             headingDeg = heading,
             distanceM = distance,
@@ -193,9 +221,8 @@ class DeterministicSimulationEngine : SimulationEngine {
         val t = elapsedMs / 1_000.0
         val remaining = (config.durationMs - elapsedMs) / 1_000.0
         val envelope = minOf(1.0, t / 0.8, max(0.0, remaining / 0.8))
-        val stepHz = config.cadenceSpm / 60.0
         val seedPhase = seedPhase(config)
-        val phase = 2.0 * PI * stepHz * t + seedPhase
+        val phase = 2.0 * PI * continuousSteps(config, elapsedMs) + seedPhase
         val drift = sin(2.0 * PI * 0.17 * t + seedPhase) * 0.06
         val sensorNoise = 0.035 * sin(2.0 * PI * 7.3 * t + seedPhase * 2.3) +
             0.018 * sin(2.0 * PI * 11.1 * t + seedPhase * 0.6)

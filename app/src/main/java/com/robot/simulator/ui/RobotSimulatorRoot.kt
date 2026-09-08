@@ -95,8 +95,8 @@ fun RobotSimulatorRoot() {
                 SimulationSetupScreen(
                     routes = routes,
                     contentPadding = padding,
-                    onStart = { route, steps, cadence ->
-                        simulationViewModel.start(route, steps, cadence)
+                    onStart = { route, steps, cadence, variation, period, seed ->
+                        simulationViewModel.start(route, steps, cadence, variation, period, seed)
                         navController.navigate(Destination.Running.route)
                     },
                 )

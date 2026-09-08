@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -59,6 +60,8 @@ import com.robot.simulator.core.MotionSensorSample
 import com.robot.simulator.core.RouteDefinition
 import com.robot.simulator.core.RoutePointCodec
 import com.robot.simulator.core.SimulationRules
+import com.robot.simulator.core.SimulationConfig
+import com.robot.simulator.core.DeterministicSimulationEngine
 import com.robot.simulator.core.SimulationSnapshot
 import com.robot.simulator.core.SimulationStatus
 import com.robot.simulator.data.local.RouteEntity
@@ -71,22 +74,45 @@ import java.util.Locale
 fun SimulationSetupScreen(
     routes: List<RouteEntity>,
     contentPadding: PaddingValues,
-    onStart: (RouteEntity, Int, Double) -> Unit,
+    onStart: (RouteEntity, Int, Double, Double, Double, Long) -> Unit,
 ) {
     var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
     var totalStepsText by rememberSaveable { mutableStateOf("") }
     var cadenceText by rememberSaveable { mutableStateOf("140") }
+    var variationText by rememberSaveable { mutableStateOf("0") }
+    var periodText by rememberSaveable { mutableStateOf("10") }
+    var seedText by rememberSaveable { mutableStateOf("1") }
+    var presetMessage by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val preferences = remember(context) { context.getSharedPreferences("simulation_preset", 0) }
     LaunchedEffect(routes) {
         if (routes.none { it.id == selectedRouteId }) selectedRouteId = routes.firstOrNull()?.id
     }
     val selectedRoute = routes.firstOrNull { it.id == selectedRouteId }
     val totalSteps = totalStepsText.toIntOrNull()
     val cadence = cadenceText.toDoubleOrNull()
-    val routeDefinition = selectedRoute?.let {
-        RouteDefinition(it.id, it.name, RoutePointCodec.decode(it.controlPointsJson), it.lengthM)
+    val routeDefinition = remember(selectedRoute) {
+        selectedRoute?.let { RouteDefinition(it.id, it.name, RoutePointCodec.decode(it.controlPointsJson), it.lengthM) }
     }
     val validation = SimulationRules.validate(routeDefinition, totalSteps, cadence)
-    val durationMs = if (validation.valid) totalSteps!! * 60_000.0 / cadence!! else null
+    val variation = variationText.toDoubleOrNull()
+    val period = periodText.toDoubleOrNull()
+    val seed = seedText.toLongOrNull()
+    val variationLimit = cadence?.let { minOf(it - 120.0, 151.0 - it).coerceAtLeast(0.0) } ?: 0.0
+    val motionValid = variation != null && variation in 0.0..variationLimit &&
+        period != null && period in 2.0..120.0 && seed != null
+    val preview = remember(routeDefinition, totalSteps, cadence, variation, period, seed) {
+        if (validation.valid && motionValid) {
+            val config = SimulationConfig(routeDefinition!!, totalSteps!!, cadence!!, seed!!, variation!!, period!!)
+            val engine = DeterministicSimulationEngine()
+            List(161) { engine.cadenceAt(config, config.durationMs * it / 160) }
+        } else emptyList()
+    }
+    val cadenceValid = cadence != null && cadence in SimulationRules.MIN_CADENCE_SPM..SimulationRules.MAX_CADENCE_SPM
+    val suggestedSteps = if (selectedRoute != null && cadenceValid)
+        SimulationRules.suggestedSteps(selectedRoute.lengthM, cadence!!) else null
+    val durationMs = if (totalSteps != null && totalSteps > 0 && cadenceValid)
+        totalSteps * 60_000.0 / cadence!! else null
 
     Column(
         modifier = Modifier.fillMaxSize().padding(contentPadding).padding(16.dp).verticalScroll(rememberScrollState()),
@@ -112,23 +138,93 @@ fun SimulationSetupScreen(
             value = totalStepsText,
             onValueChange = { totalStepsText = it.filter(Char::isDigit) },
             label = { Text("总步数") },
+            singleLine = true,
+            isError = totalStepsText.isNotEmpty() && (totalSteps == null || totalSteps <= 0),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
             value = cadenceText,
             onValueChange = { cadenceText = it.filter { char -> char.isDigit() || char == '.' } },
-            label = { Text("步频（120–151 步/分钟）") },
+            label = { Text("平均步频（120–151 步/分钟）") },
+            singleLine = true,
+            isError = cadenceText.isNotEmpty() && !cadenceValid,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth(),
         )
-        validation.speedMps?.let { Text("平均速度：%.2f m/s".format(it)) }
-        durationMs?.let { Text("预计时长：${formatDuration(it.toLong())}") }
-        validation.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Text("可复现步频扰动", style = MaterialTheme.typography.titleMedium)
+        Text("合成测试数据；幅度为 0 时关闭扰动。周期会对齐到全程整数周期，保持总步数和时长。", style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(value = variationText, onValueChange = { variationText = it },
+            label = { Text("扰动幅度 ±步/分钟（最大 %.1f）".format(variationLimit)) },
+            singleLine = true, isError = variation == null || variation !in 0.0..variationLimit,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = periodText, onValueChange = { periodText = it },
+            label = { Text("期望周期（2–120 秒）") }, singleLine = true,
+            isError = period == null || period !in 2.0..120.0,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = seedText, onValueChange = { seedText = it },
+            label = { Text("随机种子（整数，相同参数可复现）") }, singleLine = true,
+            isError = seed == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                cadenceText = "140"; variationText = "0"; periodText = "10"; seedText = "1"
+                totalStepsText = ""; presetMessage = "已恢复默认参数"
+            }) { Text("重置") }
+            OutlinedButton(enabled = validation.valid && motionValid, onClick = {
+                preferences.edit().putString("steps", totalStepsText).putString("cadence", cadenceText)
+                    .putString("variation", variationText).putString("period", periodText)
+                    .putString("seed", seedText).apply()
+                presetMessage = "已保存参数预设（不含路线）"
+            }) { Text("保存预设") }
+            OutlinedButton(onClick = {
+                if (preferences.contains("steps")) {
+                    totalStepsText = preferences.getString("steps", "")!!
+                    cadenceText = preferences.getString("cadence", "140")!!
+                    variationText = preferences.getString("variation", "0")!!
+                    periodText = preferences.getString("period", "10")!!
+                    seedText = preferences.getString("seed", "1")!!
+                    presetMessage = "已载入，请核对当前路线的速度"
+                } else presetMessage = "尚未保存预设"
+            }) { Text("载入预设") }
+        }
+        if (presetMessage.isNotEmpty()) Text(presetMessage)
+        suggestedSteps?.let { range ->
+            Text("建议总步数：${range.minimum}–${range.maximum} 步")
+            OutlinedButton(onClick = {
+                totalStepsText = (range.minimum + (range.maximum - range.minimum) / 2).toString()
+            }) { Text("填入建议步数") }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("模拟预览", style = MaterialTheme.typography.titleMedium)
+                Text("允许平均速度：2–5 m/s（7.2–18 km/h）")
+                validation.speedMps?.let { Text("平均速度：%.2f m/s · %.1f km/h".format(it, it * 3.6)) }
+                durationMs?.let { Text("预计时长：${formatDuration(it.toLong())}") }
+                if (preview.isNotEmpty()) {
+                    Text("步频范围：%.1f–%.1f 步/分钟".format(cadence!! - variation!!, cadence + variation))
+                    val lineColor = MaterialTheme.colorScheme.primary
+                    Canvas(Modifier.fillMaxWidth().height(100.dp)) {
+                        val path = Path()
+                        preview.forEachIndexed { index, value ->
+                            val x = size.width * index / preview.lastIndex
+                            val y = size.height * (1 - (value - 120) / 31).toFloat()
+                            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        }
+                        drawPath(path, lineColor, style = Stroke(width = 2.dp.toPx()))
+                    }
+                    Text("全程步频预览 · 纵轴 120–151", style = MaterialTheme.typography.bodySmall)
+                }
+                Text("保留速度起伏，瞬时速度可能短暂超出平均速度范围。", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (totalStepsText.isNotEmpty() || !cadenceValid) {
+            validation.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
         Text("传感器：程序化运动模型 v1，50 Hz（加速度、陀螺仪、重力与姿态）")
         Button(
-            onClick = { onStart(selectedRoute!!, totalSteps!!, cadence!!) },
-            enabled = validation.valid,
+            onClick = { onStart(selectedRoute!!, totalSteps!!, cadence!!, variation!!, period!!, seed!!) },
+            enabled = validation.valid && motionValid,
             modifier = Modifier.fillMaxWidth(),
         ) { Text("开始模拟") }
     }
@@ -148,13 +244,12 @@ fun SimulationRunningScreen(
         PlaceholderScreen("尚未开始模拟", "请先在参数页选择路线并填写参数。", contentPadding)
         return
     }
-    Row(
+    BoxWithConstraints(
         modifier = Modifier.fillMaxSize().padding(contentPadding).padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SimulationMap(route, snapshot, Modifier.weight(1.2f).fillMaxHeight())
+        val details: @Composable (Modifier) -> Unit = { detailsModifier ->
         Column(
-            modifier = Modifier.width(520.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
+            modifier = detailsModifier.verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(statusLabel(snapshot.status), style = MaterialTheme.typography.titleLarge)
@@ -184,6 +279,18 @@ fun SimulationRunningScreen(
                     enabled = snapshot.status in listOf(SimulationStatus.Running, SimulationStatus.Paused),
                     modifier = Modifier.weight(1f),
                 ) { Text("提前停止") }
+            }
+        }
+        }
+        if (maxWidth >= 840.dp) {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SimulationMap(route, snapshot, Modifier.weight(1f).fillMaxHeight())
+                details(Modifier.width(360.dp).fillMaxHeight())
+            }
+        } else {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SimulationMap(route, snapshot, Modifier.fillMaxWidth().weight(1f))
+                details(Modifier.fillMaxWidth().weight(1.2f))
             }
         }
     }
