@@ -1,7 +1,9 @@
 # RobotSimulator 技术文档
 
-版本：当前 MuMu 12 Debug 版本  
-更新日期：2026-09-07  
+版本：当前 MuMu 12 Debug 版本
+
+更新日期：2026-09-07
+
 包名：`com.robot.simulator`
 
 ## 1. 项目定位
@@ -204,4 +206,3 @@ RobotSimulator
 4. 在 Robot Bridge Test 中完成 AIDL 重连、暂停/继续和进程重启测试；
 5. 获得具体机器人测试程序后，再做定向接口适配；
 6. 最后再决定是否需要多目标程序配置和更细的传感器模型。
-
