@@ -6,35 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SimulationModelsTest {
-    @Test
-    fun variableCadenceIsRepeatableBoundedAndEndsExactly() {
-        val config = SimulationConfig(route, 1000, 140.0, 42L, 8.0, 10.0)
-        val engine = DeterministicSimulationEngine()
-        var previous = 0
-        for (time in 0L until config.durationMs step 100L) {
-            val snapshot = engine.snapshot(config, time)
-            assertTrue(snapshot.cadenceSpm in 132.0..148.0)
-            assertTrue(snapshot.stepCount >= previous)
-            assertEquals(snapshot, engine.snapshot(config, time))
-            previous = snapshot.stepCount
-        }
-        val end = engine.snapshot(config, config.durationMs + 1000)
-        assertEquals(1000, end.stepCount)
-        assertEquals(route.controlPoints.last(), end.position)
-        assertEquals(0.0, end.cadenceSpm, 0.0)
-        assertTrue(engine.snapshot(config, 5000) != engine.snapshot(config.copy(randomSeed = 600), 5000))
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun rejectsCadenceVariationOutsideBounds() {
-        SimulationConfig(route, 1000, 151.0, cadenceVariationSpm = 1.0)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun rejectsInvalidCadencePeriod() {
-        SimulationConfig(route, 1000, 140.0, cadencePeriodSeconds = Double.NaN)
-    }
-
+    // 1.2 km two-point route: keeps average speeds in the realistic 2–5 m/s range.
     private val route = RouteDefinition(
         id = "route-1",
         name = "测试路线",
@@ -44,6 +16,120 @@ class SimulationModelsTest {
         ),
         lengthM = 1_200.0,
     )
+
+    // 3 km route with a control point per kilometer: needed for per-km segment checks.
+    private val route3k = RouteDefinition(
+        id = "route-3k",
+        name = "三公里测试路线",
+        controlPoints = listOf(
+            PointM(23.0, 113.0, 0.0),
+            PointM(23.006, 113.0, 1_000.0),
+            PointM(23.012, 113.0, 2_000.0),
+            PointM(23.018, 113.0, 3_000.0),
+        ),
+        lengthM = 3_000.0,
+    )
+
+    @Test
+    fun segmentVariationIsRepeatableBoundedAndEndsExactly() {
+        val config = SimulationConfig(
+            route = route3k,
+            totalSteps = 1_000,
+            cadenceSpm = 140.0,
+            randomSeed = 42L,
+            cadenceVariationSpm = 8.0,
+            speedVariationPercent = 10.0,
+        )
+        val engine = DeterministicSimulationEngine()
+        var previous = 0
+        for (time in 0L until config.durationMs step 100L) {
+            val snapshot = engine.snapshot(config, time)
+            assertTrue("cadence ${snapshot.cadenceSpm} out of 132..148", snapshot.cadenceSpm in 132.0..148.0)
+            assertTrue(snapshot.stepCount >= previous)
+            assertEquals(snapshot, engine.snapshot(config, time))
+            previous = snapshot.stepCount
+        }
+        val end = engine.snapshot(config, config.durationMs + 1000)
+        assertEquals(1_000, end.stepCount)
+        assertEquals(route3k.controlPoints.last(), end.position)
+        assertEquals(0.0, end.cadenceSpm, 0.0)
+        assertTrue(engine.snapshot(config, 5_000) != engine.snapshot(config.copy(randomSeed = 600), 5_000))
+    }
+
+    @Test
+    fun cadenceAndPaceVaryBySegmentAroundAverages() {
+        val config = SimulationConfig(
+            route = route3k,
+            totalSteps = 2_000,
+            cadenceSpm = 140.0,
+            randomSeed = 42L,
+            cadenceVariationSpm = 8.0,
+            speedVariationPercent = 12.0,
+        )
+        val engine = DeterministicSimulationEngine()
+        val segments = engine.segmentStats(config)
+        assertTrue("expected several segments, got ${segments.size}", segments.size >= 3)
+        segments.forEach {
+            assertTrue("segment cadence ${it.cadenceSpm}", it.cadenceSpm in 132.0..148.0)
+        }
+        // Segments must actually differ, both in cadence and pace.
+        assertTrue("cadence should vary per segment: ${segments.map { it.cadenceSpm }}",
+            segments.map { it.cadenceSpm }.toSet().size > 1)
+        assertTrue("pace should vary per segment: ${segments.map { it.paceSecondsPerKm }}",
+            segments.map { it.paceSecondsPerKm }.toSet().size > 1)
+        // Time-weighted cadence across the whole route stays on the configured average
+        // (steps per second must average out to the configured cadence).
+        var totalSeconds = 0.0
+        var weightedSteps = 0.0
+        segments.forEach { segment ->
+            val seconds = (segment.endM - segment.startM) / segment.speedMps.coerceAtLeast(0.01)
+            totalSeconds += seconds
+            weightedSteps += segment.cadenceSpm / 60.0 * seconds
+        }
+        val timeWeightedCadence = weightedSteps / totalSeconds * 60.0
+        assertEquals(140.0, timeWeightedCadence, 0.6)
+    }
+
+    @Test
+    fun zeroSpeedVariationKeepsPerKmPaceFlatButMicroRippleRemains() {
+        val engine = DeterministicSimulationEngine()
+        val flatSegments = engine.segmentStats(
+            SimulationConfig(route3k, 2_000, 140.0, randomSeed = 7L,
+                cadenceVariationSpm = 0.0, speedVariationPercent = 0.0),
+        )
+        val bumpySegments = engine.segmentStats(
+            SimulationConfig(route3k, 2_000, 140.0, randomSeed = 7L,
+                cadenceVariationSpm = 0.0, speedVariationPercent = 10.0),
+        )
+        val flatPaces = flatSegments.map { it.paceSecondsPerKm }
+        val bumpyPaces = bumpySegments.map { it.paceSecondsPerKm }
+        // With 0% speed variation, per-km pace is essentially constant (micro ripple cancels out
+        // over a kilometer). With 10% it differs clearly between segments.
+        assertTrue("flat paces nearly equal: $flatPaces", flatPaces.max() - flatPaces.min() < 5.0)
+        assertTrue("bumpy paces clearly differ: $bumpyPaces", bumpyPaces.max() - bumpyPaces.min() > 20.0)
+        // A different seed yields a different per-segment cadence arrangement.
+        val other = engine.segmentStats(
+            SimulationConfig(route3k, 2_000, 140.0, randomSeed = 600L,
+                cadenceVariationSpm = 8.0, speedVariationPercent = 10.0),
+        )
+        val otherCadences = other.map { it.cadenceSpm }
+        assertTrue("different seed should rearrange cadence", otherCadences.toSet().size > 1)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsCadenceVariationOutsideBounds() {
+        SimulationConfig(route, 1_000, 151.0, cadenceVariationSpm = 1.0)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsInvalidSpeedVariation() {
+        SimulationConfig(route, 1_000, 140.0, speedVariationPercent = Double.NaN)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsSpeedVariationAboveLimit() {
+        SimulationConfig(route, 1_000, 140.0, speedVariationPercent = 21.0)
+    }
 
     @Test
     fun cadenceBoundariesAreInclusive() {
@@ -116,5 +202,15 @@ class SimulationModelsTest {
         )
         assertEquals(111.2, points.last().cumulativeDistanceM, 0.5)
         assertEquals(points, RoutePointCodec.decode(RoutePointCodec.encode(points)))
+    }
+
+    @Test
+    fun engineInstancesProduceIdenticalResults() {
+        val config = SimulationConfig(
+            route3k, 2_000, 140.0, randomSeed = 42L, cadenceVariationSpm = 6.0, speedVariationPercent = 9.0,
+        )
+        val first = DeterministicSimulationEngine().snapshot(config, 123_456)
+        val second = DeterministicSimulationEngine().snapshot(config, 123_456)
+        assertEquals(first, second)
     }
 }

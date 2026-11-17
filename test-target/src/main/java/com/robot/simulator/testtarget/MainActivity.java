@@ -47,10 +47,10 @@ public final class MainActivity extends Activity {
         content.addView(reconnect);
 
         directView = section(content, "AIDL 原始数据");
-        hookView = section(content, "目标程序读取结果（由 LSPosed 接管）");
+        hookView = section(content, "目标程序读取结果（由 Hook 模块接管）");
 
         TextView note = new TextView(this);
-        note.setText("提示：0/-1 表示 Hook 尚未接管；两组实时数据一致表示桥接成功。全局位置使用 Android 测试定位接口，会保留“模拟位置”标记，仅用于授权调试。");
+        note.setText("提示：连接后先启动模拟，0/-1 可能表示尚无模拟数据或 Hook 未接管。步数、步频、速度和传感器数据应与上方一致；上方位置是 GCJ-02，下方 Android Location 是 WGS-84，数值会因坐标转换不同。全局位置使用 Android 测试定位接口，会保留“模拟位置”标记。");
         note.setTextSize(16f);
         note.setPadding(0, 36, 0, 0);
         content.addView(note);

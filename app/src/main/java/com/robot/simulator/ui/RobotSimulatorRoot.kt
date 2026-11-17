@@ -1,16 +1,22 @@
 package com.robot.simulator.ui
 
+import android.app.Activity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -26,6 +32,17 @@ import com.robot.simulator.ui.screens.SimulationSetupScreen
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RobotSimulatorRoot() {
+    val context = LocalContext.current
+    var showMapSettings by remember { mutableStateOf(false) }
+    if (showMapSettings) {
+        MapKeyDialog(
+            onDismiss = { showMapSettings = false },
+            onSaved = {
+                showMapSettings = false
+                (context as? Activity)?.recreate()
+            },
+        )
+    }
     val navController = rememberNavController()
     val routesViewModel: RoutesViewModel = viewModel()
     val simulationViewModel: SimulationViewModel = viewModel()
@@ -47,7 +64,12 @@ fun RobotSimulatorRoot() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(title = { Text(currentDestination.title) })
+            TopAppBar(
+                title = { Text(currentDestination.title) },
+                actions = {
+                    TextButton(onClick = { showMapSettings = true }) { Text("地图设置") }
+                },
+            )
         },
         bottomBar = {
             NavigationBar {
@@ -95,8 +117,8 @@ fun RobotSimulatorRoot() {
                 SimulationSetupScreen(
                     routes = routes,
                     contentPadding = padding,
-                    onStart = { route, steps, cadence, variation, period, seed ->
-                        simulationViewModel.start(route, steps, cadence, variation, period, seed)
+                    onStart = { route, steps, cadence, variation, speedVariation, seed ->
+                        simulationViewModel.start(route, steps, cadence, variation, speedVariation, seed)
                         navController.navigate(Destination.Running.route)
                     },
                 )

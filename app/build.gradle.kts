@@ -10,7 +10,8 @@ val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) file.inputStream().use(::load)
 }
-val amapApiKey = providers.gradleProperty("amapApiKey").orNull
+val publicBuild = providers.gradleProperty("publicBuild").orNull == "true"
+val amapApiKey = if (publicBuild) "" else providers.gradleProperty("amapApiKey").orNull
     ?: localProperties.getProperty("amap.api.key", "")
 
 android {
@@ -21,8 +22,8 @@ android {
         applicationId = "com.robot.simulator"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["AMAP_API_KEY"] = amapApiKey

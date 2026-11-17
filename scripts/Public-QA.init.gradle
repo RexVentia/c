@@ -1,0 +1,10 @@
+// Separate application ID keeps public-build checks away from existing app data.
+allprojects {
+    plugins.withId('com.android.application') {
+        if (project.path == ':app') {
+            androidComponents.finalizeDsl { android ->
+                android.defaultConfig.applicationId = 'com.robot.simulator.publicqa'
+            }
+        }
+    }
+}

@@ -1,6 +1,5 @@
 package com.robot.simulator.ui.screens
 
-import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Point
 import android.os.Bundle
@@ -59,6 +58,8 @@ import com.amap.api.maps.model.MarkerOptions
 import com.amap.api.maps.model.PolylineOptions
 import com.robot.simulator.core.GeoMath
 import com.robot.simulator.core.PointM
+import com.robot.simulator.ui.MapKeyDialog
+import com.robot.simulator.ui.MapSettings
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -84,12 +85,8 @@ fun RouteEditorScreen(
     var consentGranted by rememberSaveable {
         mutableStateOf(preferences.getBoolean("accepted", false))
     }
-    val keyConfigured = runCatching {
-        context.packageManager.getApplicationInfo(
-            context.packageName,
-            PackageManager.GET_META_DATA,
-        ).metaData?.getString("com.amap.api.v2.apikey").orEmpty().isNotBlank()
-    }.getOrDefault(false)
+    var mapKey by remember { mutableStateOf(MapSettings.apiKey(context)) }
+    var showKeyDialog by remember { mutableStateOf(false) }
 
     val privacyInitialized = remember(consentGranted) {
         if (consentGranted) {
@@ -117,13 +114,22 @@ fun RouteEditorScreen(
         return
     }
 
-    if (!keyConfigured) {
+    if (mapKey.isBlank()) {
+        if (showKeyDialog) {
+            MapKeyDialog(
+                onDismiss = { showKeyDialog = false },
+                onSaved = {
+                    mapKey = MapSettings.apiKey(context)
+                    showKeyDialog = false
+                },
+            )
+        }
         PlaceholderScreen(
             title = "缺少高德地图 Key",
-            description = "请在 local.properties 中配置 amap.api.key 后重新构建。",
+            description = "填写你自己的高德 Android 平台 SDK Key，即可创建地图路线。",
             contentPadding = contentPadding,
-            actionLabel = "返回",
-            onAction = onCancel,
+            actionLabel = "填写地图 Key",
+            onAction = { showKeyDialog = true },
         )
         return
     }
@@ -344,7 +350,10 @@ private fun Modifier.drawingGestureModifier(
 private fun AMapHost(modifier: Modifier, onMapReady: (AMap) -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val mapView = remember(context) { MapView(context) }
+    val mapView = remember(context) {
+        MapSettings.initialize(context)
+        MapView(context)
+    }
 
     DisposableEffect(mapView, lifecycle) {
         mapView.onCreate(Bundle())

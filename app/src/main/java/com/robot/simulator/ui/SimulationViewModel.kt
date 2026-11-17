@@ -53,7 +53,8 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
     private var ticker: Job? = null
 
     fun start(route: RouteEntity, totalSteps: Int, cadenceSpm: Double,
-              cadenceVariationSpm: Double = 0.0, cadencePeriodSeconds: Double = 10.0, randomSeed: Long = 1L) {
+              cadenceVariationSpm: Double = 4.0, speedVariationPercent: Double = 8.0,
+              randomSeed: Long = 1L) {
         val previousConfig = config
         val previousSnapshot = mutableSnapshot.value
         if (previousConfig != null && previousSnapshot?.status in
@@ -75,7 +76,7 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
             cadenceSpm = cadenceSpm,
             randomSeed = randomSeed,
             cadenceVariationSpm = cadenceVariationSpm,
-            cadencePeriodSeconds = cadencePeriodSeconds,
+            speedVariationPercent = speedVariationPercent,
         )
         config = newConfig
         mutableActiveRoute.value = newConfig.route
@@ -160,7 +161,7 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
                     routeId = activeConfig.route.id,
                     routeName = activeConfig.route.name,
                     status = finalSnapshot.status.name,
-                    configJson = "{\"totalSteps\":${activeConfig.totalSteps},\"cadenceSpm\":${activeConfig.cadenceSpm},\"cadenceVariationSpm\":${activeConfig.cadenceVariationSpm},\"cadencePeriodSeconds\":${activeConfig.cadencePeriodSeconds},\"randomSeed\":${activeConfig.randomSeed}}",
+                    configJson = "{\"totalSteps\":${activeConfig.totalSteps},\"cadenceSpm\":${activeConfig.cadenceSpm},\"cadenceVariationSpm\":${activeConfig.cadenceVariationSpm},\"speedVariationPercent\":${activeConfig.speedVariationPercent},\"randomSeed\":${activeConfig.randomSeed}}",
                     totalSteps = activeConfig.totalSteps,
                     cadenceSpm = activeConfig.cadenceSpm,
                     plannedDurationMs = activeConfig.durationMs,
@@ -168,7 +169,7 @@ class SimulationViewModel(application: Application) : AndroidViewModel(applicati
                     finalStepCount = finalSnapshot.stepCount,
                     finalLatitude = finalSnapshot.position.latitude,
                     finalLongitude = finalSnapshot.position.longitude,
-                    sensorProfile = "PROCEDURAL_V1_50HZ",
+                    sensorProfile = "PROCEDURAL_V2_50HZ",
                     startedAtEpochMs = startedAtEpochMs,
                     endedAtEpochMs = now,
                     elapsedBeforePauseMs = finalSnapshot.elapsedMs,
